@@ -19,7 +19,7 @@ var _mouth: MeshInstance3D
 func build(role: Role, outfit: Color) -> void:
 	Shapes.box(self, Vector3(0.67, 0.69, 0.38), Vector3(0, 1.25, 0), outfit)
 	Shapes.box(self, Vector3(0.46, 0.46, 0.42), Vector3(0, 1.82, 0), SKIN)
-	Shapes.box(self, Vector3(0.46, 0.12, 0.43), Vector3(0, 2.03, 0), METAL if role == Role.GUARD else BOOTS)
+	Shapes.box(self, Vector3(0.48, 0.12, 0.44), Vector3(0, 2.03, 0), METAL if role == Role.GUARD else BOOTS)
 	Shapes.box(self, Vector3(0.31, 0.073, 0.023), Vector3(0, 1.87, -0.217), BOOTS)
 	_mouth = Shapes.box(self, Vector3(0.13, 0.025, 0.015), Vector3(0, 1.72, -0.214), Color("#633d3b"))
 	for side in [-1.0, 1.0]:
@@ -81,6 +81,34 @@ func lower_weapon() -> void:
 func speak_pose(amount: float, gesture: float) -> void:
 	_mouth.scale.y = 1.0 + amount * 2.6
 	right_arm.rotation.x = gesture
+
+
+func cinematic_pose(step: float, seated: float, speech: float, gesture: float) -> void:
+	var seat := -PI * 0.5 * seated
+	_legs[0].rotation.x = seat + step
+	_legs[1].rotation.x = seat - step
+	left_arm.rotation.x = -step * 0.65
+	speak_pose(speech, step * 0.65 + gesture)
+
+
+func stride(travel: float, running: bool) -> void:
+	var swing := sin(travel * TAU / 1.6) * (0.73 if running else 0.43)
+	_legs[0].rotation.x = swing
+	_legs[1].rotation.x = -swing
+	left_arm.rotation.x = -swing * 0.65
+	right_arm.rotation.x = swing * 0.65
+
+
+func sit_pose() -> void:
+	_legs[0].rotation.x = -PI * 0.5
+	_legs[1].rotation.x = -PI * 0.5
+	position.y = -0.32
+
+
+func stand_pose() -> void:
+	_legs[0].rotation.x = 0.0
+	_legs[1].rotation.x = 0.0
+	position.y = 0.0
 
 
 func _joint(center: Vector3) -> Node3D:

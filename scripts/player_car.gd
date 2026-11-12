@@ -44,6 +44,7 @@ func install_cinematic_doors() -> Array[Node3D]:
 		var door := Node3D.new()
 		door.position = Vector3(side * 0.923, 0.62, -0.60)
 		visual.add_child(door)
+		door.add_to_group(&"cinematic_door")
 		doors.append(door)
 		VehicleVisual.box(door, Vector3(0.075, 0.34, 1.14), Vector3(0, 0.02, 0.56), paint)
 		VehicleVisual.box(door, Vector3(0.068, 0.33, 0.91), Vector3(-side * 0.03, 0.34, 0.57), Color("#29485c"))

@@ -89,7 +89,7 @@ func _speak(index: int) -> void:
 	var driver_speaks := index % 2 == 0
 	var speaker := _driver if driver_speaks else _friend
 	var voice := VOICES[index]
-	subtitle_changed.emit("DRIVER" if driver_speaks else "PARTNER", DIALOGUE[index])
+	subtitle_changed.emit("Erik" if driver_speaks else "PARTNER", DIALOGUE[index])
 	var eye := Vector3(5.78, 2.62, 3.35) if driver_speaks else Vector3(1.18, 2.52, -3.30)
 	var focus := Vector3(3.45, 1.42, -0.03)
 	if index == 2 or index == 4:

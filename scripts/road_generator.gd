@@ -13,6 +13,7 @@ const LAUNCH_LIP: float = 5030.0
 const LAUNCH_HEIGHT: float = 24.0
 const SKY_LANDING: float = 5220.0
 const SKY_HEIGHT: float = 115.0
+const CHASE_EDGE: float = 9120.0
 const STONE: Color = Color("#617a71")
 const METAL: Color = Color("#879e9e")
 const LINE: Color = Color("#f5f1d7")
@@ -71,16 +72,19 @@ func reset() -> void:
 	update_position(0.0)
 
 
-func update_position(distance: float, sky_route: bool = false) -> void:
-	var first_index := floori(distance / SEGMENT_LENGTH) - 1
+func update_position(distance: float, sky_route: bool = false, reverse: bool = false, look_back: bool = false) -> void:
+	var first_index := floori(distance / SEGMENT_LENGTH) - (2 if reverse or look_back else 1)
+	var direction := -1.0 if reverse else 1.0
 	for index in segments.size():
 		var track_index := first_index + posmod(index - first_index, SEGMENT_COUNT)
 		var start := float(track_index) * SEGMENT_LENGTH
 		var underground := start >= RAMP_END and start < CAVE_EXIT_START
-		var sky_section := sky_route and start >= SKY_LANDING
+		var beyond_edge := reverse and start < CHASE_EDGE
+		var sky_section := sky_route and start >= SKY_LANDING and not beyond_edge
 		segments[index].position = Vector3(0, -CAVE_DEPTH if underground else 0.0,
-			distance - start - SEGMENT_LENGTH * 0.5)
-		_surface_sections[index].visible = not sky_section and (start < RAMP_START or start >= CAVE_EXIT_START + SEGMENT_LENGTH)
+			(distance - start - SEGMENT_LENGTH * 0.5) * direction)
+		segments[index].rotation.y = PI if reverse else 0.0
+		_surface_sections[index].visible = not beyond_edge and not sky_section and (start < RAMP_START or start >= CAVE_EXIT_START + SEGMENT_LENGTH)
 		_left_shoulders[index].visible = track_index != -1
 		_cave_sections[index].visible = underground
 		_sky_sections[index].visible = sky_section

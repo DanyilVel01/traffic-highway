@@ -56,6 +56,10 @@ handbrake={
 ]
 }
 
+[autoload]
+
+CityEvents="*res://scripts/city_events.gd"
+
 [rendering]
 
 renderer/rendering_method="gl_compatibility"

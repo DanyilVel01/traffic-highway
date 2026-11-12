@@ -16,6 +16,7 @@ var passed: bool
 var near_miss: bool
 var wheels: Array[Node3D] = []
 var insect: InsectVisual
+var pursuit_gap: int = 0
 
 
 func build(kind: int, color: Color, factor: float, traffic_style: Style = Style.CAR) -> void:
@@ -47,10 +48,10 @@ func build(kind: int, color: Color, factor: float, traffic_style: Style = Style.
 			wheels = VehicleVisual.find_wheels(visual)
 
 
-func advance(travel: float, player_x: float) -> int:
+func advance(travel: float, player_x: float, oncoming_travel: float = 0.0) -> int:
 	position.z += travel * relative_speed
 	for wheel in wheels:
-		wheel.rotate_x(travel * (1.0 - relative_speed) / 0.36)
+		wheel.rotate_x((travel * (1.0 - relative_speed) + oncoming_travel) / 0.36)
 	if insect:
 		insect.step(travel * (1.0 - relative_speed))
 	if passed:

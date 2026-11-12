@@ -1,6 +1,10 @@
 extends Node
 
 const GAME: PackedScene = preload("res://scenes/game.tscn")
+const GameRules = preload("res://scripts/game.gd")
+const CityPhase = preload("res://scripts/city_phase.gd")
+const CityStory = preload("res://scripts/city_story.gd")
+const SpaceFlight = preload("res://scripts/space_flight.gd")
 const VehicleVisual = preload("res://scripts/vehicle_visual.gd")
 const SaveManager = preload("res://scripts/save_manager.gd")
 const AudioManager = preload("res://scripts/audio_manager.gd")
@@ -13,7 +17,7 @@ const GOLD: Color = Color("#ffd288")
 const PAINT = VehicleVisual.PLAYER_PAINTS
 const DRIVE_CONTROLS: String = "A / D  or  ← / →   STEER    ·    W / ↑   GAS    ·    S / ↓   BRAKE    ·    SPACE   DRIFT    ·    ESC   PAUSE"
 
-enum State { MENU, PLAYING, PAUSED, GAME_OVER, GARAGE, SETTINGS, INTRO, FINALE, COMPLETE }
+enum State { MENU, PLAYING, PAUSED, GAME_OVER, GARAGE, SETTINGS, INTRO, FINALE, CHAPTERS, CITY, CITY_PAUSED, CITY_OVER, SPACE, SPACE_PAUSED, SPACE_OVER, SPACE_COMPLETE }
 
 var state: State = State.MENU
 var settings_return: State = State.MENU
@@ -33,6 +37,9 @@ var _intro: GarageIntro
 var _subtitle_panel: PanelContainer
 var _subtitle_speaker: Label
 var _subtitle_text: Label
+var _chapter: GameRules.Chapter = GameRules.Chapter.HIGHWAY
+var _city: CityPhase
+var _space: SpaceFlight
 
 
 func _ready() -> void:
@@ -47,7 +54,10 @@ func _ready() -> void:
 	game.connect(&"run_ended", _on_run_ended)
 	game.connect(&"finale_started", _show_finale)
 	game.connect(&"finale_cue", _on_finale_cue)
-	game.connect(&"run_completed", _on_run_completed)
+	game.connect(&"pursuit_started", _show_pursuit)
+	game.connect(&"rescue_started", _show_rescue)
+	game.connect(&"rescue_subtitle", _show_intro_subtitle)
+	game.connect(&"city_started", _start_city)
 	_apply_shadows()
 	var layer := CanvasLayer.new()
 	add_child(layer)
@@ -69,7 +79,15 @@ func _input(event: InputEvent) -> void:
 			_pause()
 		State.PAUSED:
 			_resume()
-		State.GARAGE, State.GAME_OVER, State.COMPLETE:
+		State.CITY:
+			_pause_city()
+		State.CITY_PAUSED:
+			_resume_city()
+		State.SPACE:
+			_pause_space()
+		State.SPACE_PAUSED:
+			_resume_space()
+		State.GARAGE, State.GAME_OVER, State.CHAPTERS, State.FINALE, State.CITY_OVER, State.SPACE_OVER, State.SPACE_COMPLETE:
 			_show_menu()
 		State.SETTINGS:
 			_close_settings()
@@ -86,6 +104,8 @@ func _notification(what: int) -> void:
 
 func _show_menu() -> void:
 	_commit_run()
+	_remove_city()
+	_remove_space()
 	game.call(&"show_backdrop", int(profile.data.selected))
 	audio.set_driving(false)
 	_new_screen(State.MENU)
@@ -96,6 +116,7 @@ func _show_menu() -> void:
 	_label(stack, "Three lanes. One more run.", 24, MUTED)
 	_gap(stack, 16)
 	var play := _button(stack, "Play", _start_intro, true)
+	_button(stack, "Chapters", _show_chapters)
 	_button(stack, "Garage", _open_garage)
 	_button(stack, "Settings", _open_settings)
 	_button(stack, "Quit", get_tree().quit)
@@ -103,6 +124,31 @@ func _show_menu() -> void:
 	_label(stack, "BEST  %07d     /     COINS  %d" % [profile.data.best_score, profile.data.balance], 16, GOLD)
 	play.grab_focus()
 	_footer(DRIVE_CONTROLS)
+
+
+func _show_chapters() -> void:
+	_new_screen(State.CHAPTERS)
+	var stack := _dialog("START FROM A SCENE", "Chapters")
+	var grid := GridContainer.new()
+	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", 10)
+	grid.add_theme_constant_override("v_separation", 10)
+	stack.add_child(grid)
+	_button(grid, "Garage prologue", _start_intro, true).grab_focus()
+	_button(grid, "Coastal highway", _start_run.bind(GameRules.Chapter.HIGHWAY))
+	_button(grid, "Crystal Cavern", _start_run.bind(GameRules.Chapter.CAVERN))
+	_button(grid, "Skyway", _start_run.bind(GameRules.Chapter.SKYWAY))
+	_button(grid, "Castle raid", _start_run.bind(GameRules.Chapter.CASTLE))
+	_button(grid, "Police pursuit", _start_run.bind(GameRules.Chapter.PURSUIT))
+	_button(grid, "Edge of the Skyway", _start_run.bind(GameRules.Chapter.RESCUE))
+	_button(grid, "Helicopter escape", _start_run.bind(GameRules.Chapter.HELICOPTER))
+	_button(grid, "Skydive and city", _start_city)
+	_button(grid, "Helicopter Wreck", _start_city.bind(CityStory.Start.WRECK))
+	_button(grid, "Two Minutes to Impact", _start_city.bind(CityStory.Start.ESCAPE))
+	_button(grid, "Vesper Flight", _start_space)
+	for button: Button in grid.get_children():
+		button.custom_minimum_size.x = 232
+	_button(stack, "Back", _show_menu)
 
 
 func _start_intro() -> void:
@@ -117,6 +163,17 @@ func _start_intro() -> void:
 	hint.offset_top = 8
 	hint.offset_bottom = 30
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_build_subtitles()
+
+	_intro = GarageIntro.new()
+	game.add_child(_intro)
+	_intro.subtitle_changed.connect(_show_intro_subtitle)
+	_intro.engine_started.connect(audio.set_driving.bind(true))
+	_intro.finished.connect(_finish_intro, CONNECT_ONE_SHOT)
+	_intro.play(int(profile.data.selected), game.prepare_intro())
+
+
+func _build_subtitles() -> void:
 	_subtitle_panel = PanelContainer.new()
 	_subtitle_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_subtitle_panel.add_theme_stylebox_override("panel", _style(Color("#0d1822e8"), Color("#506979"), 8, 10))
@@ -136,14 +193,6 @@ func _start_intro() -> void:
 	_subtitle_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_subtitle_panel.hide()
 
-	_intro = GarageIntro.new()
-	game.add_child(_intro)
-	_intro.subtitle_changed.connect(_show_intro_subtitle)
-	_intro.engine_started.connect(audio.set_driving.bind(true))
-	_intro.finished.connect(_finish_intro, CONNECT_ONE_SHOT)
-	_intro.play(int(profile.data.selected), game.prepare_intro())
-
-
 func _show_intro_subtitle(speaker: String, line: String) -> void:
 	_subtitle_speaker.text = speaker
 	_subtitle_text.text = line
@@ -159,15 +208,16 @@ func _finish_intro() -> void:
 	_start_run()
 
 
-func _start_run() -> void:
+func _start_run(chapter: GameRules.Chapter = GameRules.Chapter.HIGHWAY) -> void:
+	_chapter = chapter
 	current_score = 0
 	current_distance = 0.0
 	current_coins = 0
-	run_saved = false
+	run_saved = chapter != GameRules.Chapter.HIGHWAY
 	_new_screen(State.PLAYING)
 	_build_hud()
-	game.call(&"start_run", int(profile.data.selected))
 	audio.set_driving(true)
+	game.call(&"start_run", int(profile.data.selected), chapter)
 
 
 func _pause() -> void:
@@ -193,23 +243,158 @@ func _resume() -> void:
 
 func _restart() -> void:
 	_commit_run()
-	_start_run()
+	_start_run(_chapter)
 
 
 func _on_run_ended(distance: float, score: int, coins: int) -> void:
 	if state != State.PLAYING:
 		return
-	_show_results(distance, score, coins, false)
+	_show_results(distance, score, coins)
 
 
-func _on_run_completed(distance: float, score: int, coins: int) -> void:
-	if state == State.FINALE:
-		_show_results(distance, score, coins, true)
+func _start_city(start: CityStory.Start = CityStory.Start.DROP) -> void:
+	_commit_run()
+	_remove_city()
+	game.prepare_city()
+	audio.set_driving(false)
+	_new_screen(State.CITY)
+	_city = CityPhase.new()
+	_city.start = start
+	_city.died.connect(_show_city_death)
+	_city.escaped.connect(_start_space, CONNECT_DEFERRED)
+	_city.story.launched.connect(audio.set_driving.bind(false))
+	_city.shot.connect(audio.play_shot_at)
+	_city.horn.connect(audio.play_cue.bind("horn"))
+	_city.shout.connect(audio.play_cue.bind("panic"))
+	_city.siren.connect(audio.play_cue.bind("siren"))
+	_city.traffic.engine_speed.connect(_update_city_engine)
+	add_child(_city)
+
+
+func _remove_city() -> void:
+	if is_instance_valid(_city):
+		_city.set_active(false)
+		remove_child(_city)
+		_city.queue_free()
+		_city = null
+
+
+func _pause_city() -> void:
+	if _city.story.cinematic:
+		return
+	audio.set_driving(false)
+	_city.set_active(false)
+	_new_screen(State.CITY_PAUSED)
+	var stack := _dialog("CITY DISTRICT", "Paused")
+	_button(stack, "Resume", _resume_city, true).grab_focus()
+	_add_city_restart(stack)
+	_button(stack, "Main Menu", _show_menu)
+
+
+func _resume_city() -> void:
+	_new_screen(State.CITY)
+	_city.set_active(true)
+
+
+func _show_city_death(reason: String) -> void:
+	audio.set_driving(false)
+	audio.play_cue("crash")
+	_new_screen(State.CITY_OVER)
+	var stack := _dialog("CITY DISTRICT", "Game Over")
+	_label(stack, reason, 22, MUTED)
+	_add_city_restart(stack, true)
+	_button(stack, "Main Menu", _show_menu)
+
+
+func _add_city_restart(stack: VBoxContainer, primary: bool = false) -> void:
+	var checkpoint := _city.start
+	if _city.story.stage >= CityStory.Stage.ESCAPE:
+		checkpoint = CityStory.Start.ESCAPE
+	var labels: Array[String] = ["Restart drop", "Restart at wreck", "Restart escape"]
+	var button := _button(stack, labels[checkpoint], _start_city.bind(checkpoint), primary)
+	if primary:
+		button.grab_focus()
+
+
+func _start_space(landing_start: bool = false) -> void:
+	_remove_city()
+	_remove_space()
+	game.prepare_city()
+	audio.set_driving(false)
+	_new_screen(State.SPACE)
+	_space = SpaceFlight.new()
+	_space.landing_start = landing_start
+	_space.failed.connect(_show_space_failure)
+	_space.landed.connect(_show_space_success)
+	add_child(_space)
+
+
+func _remove_space() -> void:
+	if is_instance_valid(_space):
+		_space.set_active(false)
+		remove_child(_space)
+		_space.queue_free()
+		_space = null
+
+
+func _pause_space() -> void:
+	_space.set_active(false)
+	_new_screen(State.SPACE_PAUSED)
+	var stack := _dialog("VESPER TRANSFER", "Paused")
+	_button(stack, "Resume", _resume_space, true).grab_focus()
+	_button(stack, "Restart checkpoint", _start_space.bind(_space.retry_at_landing()))
+	_button(stack, "Main Menu", _show_menu)
+
+
+func _resume_space() -> void:
+	_new_screen(State.SPACE)
+	_space.set_active(true)
+
+
+func _show_space_failure(reason: String) -> void:
+	_new_screen(State.SPACE_OVER)
+	audio.play_cue("crash")
+	var stack := _dialog("VESPER TRANSFER", "Flight lost")
+	_label(stack, reason, 21, MUTED)
+	_button(stack, "Retry landing" if _space.retry_at_landing() else "Retry flight",
+		_start_space.bind(_space.retry_at_landing()), true).grab_focus()
+	_button(stack, "Main Menu", _show_menu)
+
+
+func _show_space_success() -> void:
+	_new_screen(State.SPACE_COMPLETE)
+	var stack := _dialog("MISSION COMPLETE", "Vesper Outpost 07")
+	_button(stack, "Replay landing", _start_space.bind(true), true).grab_focus()
+	_button(stack, "Main Menu", _show_menu)
+
+
+func _update_city_engine(kmh: float) -> void:
+	audio.set_driving(kmh >= 0.0)
+	if kmh >= 0.0:
+		audio.set_speed(kmh)
+
+
+func _show_pursuit() -> void:
+	_new_screen(State.PLAYING)
+	_build_hud()
+	var objective := _label(screen, "POLICE PURSUIT  /  WATCH FOR ONCOMING TRAFFIC", 18, GOLD)
+	objective.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	objective.offset_top = 104
+	objective.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var fade := objective.create_tween()
+	fade.tween_property(objective, "modulate:a", 0.0, 0.7).set_delay(4.0)
+	fade.tween_callback(objective.queue_free)
 
 
 func _show_finale() -> void:
 	_new_screen(State.FINALE)
 	_add_letterbox()
+
+
+func _show_rescue() -> void:
+	audio.set_driving(false)
+	_show_finale()
+	_build_subtitles()
 
 
 func _add_letterbox() -> void:
@@ -236,23 +421,22 @@ func _on_finale_cue(cue: String) -> void:
 			audio.set_driving(true)
 
 
-func _show_results(distance: float, score: int, coins: int, completed: bool) -> void:
-	var new_record := score > int(profile.data.best_score)
+func _show_results(distance: float, score: int, coins: int) -> void:
+	var new_record := not run_saved and score > int(profile.data.best_score)
 	_update_stats(distance, score, coins, 0.0)
 	_commit_run()
 	audio.set_driving(false)
-	_new_screen(State.COMPLETE if completed else State.GAME_OVER)
+	_new_screen(State.GAME_OVER)
 	var eyebrow := "NEW HIGH SCORE" if new_record else "RUN COMPLETE"
-	var stack := _dialog(eyebrow, "Skyway Complete" if completed else "Game Over")
+	var stack := _dialog(eyebrow, "Game Over")
 	_label(stack, "%07d" % score, 48, GOLD)
 	_label(stack, "%s traveled    ·    %d coins" % [_distance_text(distance), coins], 21, MUTED)
 	_label(stack, "Best score  %07d" % profile.data.best_score, 20, MUTED)
 	_gap(stack, 14)
-	_button(stack, "Restart", _start_run, true).grab_focus()
+	_button(stack, "Restart", _restart, true).grab_focus()
 	_button(stack, "Main Menu", _show_menu)
-	if not completed:
-		audio.play_cue("crash")
-		_crash_flash()
+	audio.play_cue("crash")
+	_crash_flash()
 
 
 func _crash_flash() -> void:

@@ -4,6 +4,8 @@ const Shapes = preload("res://scripts/vehicle_visual.gd")
 const PlayerCar = preload("res://scripts/player_car.gd")
 const Actor = preload("res://scripts/finale_actor.gd")
 const Palace = preload("res://scripts/finale_palace.gd")
+const Police = preload("res://scripts/chase_police.gd")
+const TrafficCar = preload("res://scripts/traffic_car.gd")
 const PARK: Vector3 = Vector3(0, 0, -6)
 const DRIVER_DOOR: Vector3 = Vector3(-1.6, 0, -6)
 const PASSENGER_DOOR: Vector3 = Vector3(1.6, 0, -6)
@@ -21,9 +23,13 @@ var _palace: Palace
 var _outside_guards: Array[Actor] = []
 var _inside_guards: Array[Actor] = []
 var _doors: Array[Node3D] = []
+var pursuit: Array[Police] = []
+var oncoming: Array[TrafficCar] = []
+var _lane_width: float
 
 
 func build(lane_width: float) -> void:
+	_lane_width = lane_width
 	_palace = Palace.new()
 	add_child(_palace)
 	_palace.build(lane_width)
@@ -31,6 +37,12 @@ func build(lane_width: float) -> void:
 	_add_guards(_inside_guards, [-34.0, -39.4, -45.6], Color("#654b93"))
 	_princess = _actor(Actor.Role.PRINCESS, Color("#c464ae"), _floor_point(1.15, -48.85))
 	_princess.face(PARK)
+	for side in [-1.0, 1.0]:
+		var bay_x: float = side * (lane_width * 1.5 + 1.85)
+		Shapes.box(self, Vector3(4.5, 0.5, 22), Vector3(bay_x, -0.27, -20.0), Color("#a698bc"))
+		Shapes.box(self, Vector3(3.5, 0.44, 4.6), Vector3(bay_x, 2.54, -24.0), Color("#c9b8e4"))
+		for edge in [-1.55, 1.55]:
+			Shapes.box(self, Vector3(0.32, 2.65, 4.6), Vector3(bay_x + edge, 1.32, -24.0), Color("#b3a2c8"))
 
 
 func play(car: PlayerCar) -> void:
@@ -186,9 +198,56 @@ func _drive_away() -> void:
 	var turn := create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	turn.tween_method(_turn_car, 0.0, PI, 1.22)
 	await turn.finished
-	var depart := _camera_move(Vector3(-4.7, 4.1, -7.4), Vector3(2.5, 0.9, 29.0), 2.75)
-	_drive(depart, Vector3(TURN_RADIUS * 2.0, 0, 77.0), 2.75, Tween.EASE_IN)
-	await depart.finished
+	for side in [-1.0, 1.0]:
+		var police := Police.new()
+		add_child(police)
+		police.build()
+		police.rotation.y = PI
+		police.position = Vector3(side * 6.65, 0, -25)
+		pursuit.append(police)
+	for lane in [-1, 0]:
+		var vehicle := TrafficCar.new()
+		vehicle.build(0, Color("#766dad"), 1.0, TrafficCar.Style.CHARIOT)
+		add_child(vehicle)
+		vehicle.position = Vector3(lane * _lane_width, 0, 132.4)
+		oncoming.append(vehicle)
+	var chase := create_tween()
+	chase.tween_method(_escape_pursuit, 0.0, 1.0, 4.8)
+	for index in 3:
+		chase.parallel().tween_callback(_pursuit_shot.bind(index % 2)).set_delay(2.75 + index * 0.59)
+	await chase.finished
+
+
+func _escape_pursuit(t: float) -> void:
+	var car_z := PARK.z + t * t * (78.0 + 5.0 * t)
+	_roll_car(to_global(Vector3(TURN_RADIUS * 2.0, 0, car_z)))
+	for vehicle in oncoming:
+		vehicle.position.z = lerpf(132.4, 94.0, t)
+	for index in pursuit.size():
+		var police := pursuit[index]
+		var side := -1.0 if index == 0 else 1.0
+		var z := car_z - 19.0 + (10.5 - float(index) * 4.5) * t
+		var x := side * lerpf(6.65, 2.85, smoothstep(-13.5, -6.0, z))
+		var next_position := Vector3(x, 0, z)
+		police.animate(get_process_delta_time(), police.position.distance_to(next_position))
+		police.rotation.y = PI + atan2(next_position.x - police.position.x, maxf(0.01, z - police.position.z))
+		police.position = next_position
+	if t < 0.40:
+		_frame(Vector3(10.0, 4.2, -8.0), Vector3(0, 0.95, -16.0))
+	elif t < 0.77:
+		_frame(Vector3(-7.8, 3.65, car_z - 3.0), Vector3(0, 0.8, car_z - 9.0))
+	else:
+		var blend := smoothstep(0.77, 1.0, t)
+		var eye := Vector3(-7.8, 3.65, car_z - 3.0).lerp(Vector3(1.04, 6.3, car_z - 21.0), blend)
+		_frame(eye, Vector3(0, 0.8, car_z + 7.0))
+		_camera.rotation.x = lerpf(_camera.rotation.x, deg_to_rad(-15.5), blend)
+		_camera.rotation.y = lerp_angle(_camera.rotation.y, PI, blend)
+		_camera.fov = lerpf(56.0, 64.0, blend)
+
+
+func _pursuit_shot(index: int) -> void:
+	pursuit[index].fire_at(_car.global_position + Vector3(-0.85, 0.75, 2.4))
+	cue.emit("shot")
 
 
 func _actor(role: Actor.Role, color: Color, center: Vector3) -> Actor:

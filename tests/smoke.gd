@@ -149,6 +149,7 @@ func _run() -> void:
 	_press(app, "Back")
 	await _check_driving_controls_and_ground_route()
 	await _check_finale(app)
+	_check_chapters(app)
 	_finish()
 
 
@@ -191,26 +192,467 @@ func _check_finale(app: Node) -> void:
 	await _frames(4)
 	_check(app.state == app.State.FINALE and not game.playing and is_equal_approx(game.progress.distance, finish_distance),
 		"reaching 10 km on the skyway starts the finale at the exact distance")
-	for index in 2000:
+	for index in 2400:
 		if app.state != app.State.FINALE:
 			break
 		await physics_frame
-	_check(cues.size() == 14 and cues.front() == "parked" and cues.count("shot") == 12 and cues.back() == "depart",
-		"the pair shoots all twelve guards before the getaway")
-	_check(app.state == app.State.COMPLETE and app.run_saved and int(app.profile.data.best_distance) == int(game.FINALE_DISTANCE),
-		"the finale finishes the run and saves the distance")
-	if app.state != app.State.COMPLETE:
+	_check(cues.size() == 17 and cues.front() == "parked" and cues.count("shot") == 15 and cues[13] == "depart",
+		"the castle raid and police gunfire play in sequence")
+	_check(app.state == app.State.PLAYING and game.playing and game._pursuing and game._camera.current
+		and game._police.size() == 2, "the police chase hands control back to the player")
+	if app.state != app.State.PLAYING or not game._pursuing:
 		return
 	var finale = game._finale
 	_check(absf(finale._palace.doors[0].rotation.y) > 1.0 and absf(finale._palace.doors[1].rotation.y) > 1.0,
 		"both palace doors swing open before the characters enter")
 	_check(not finale._driver.visible and not finale._friend.visible and not finale._princess.visible
-		and game._player.position.z > 70.0 and is_equal_approx(absf(game._player.rotation.y), PI),
-		"all three board before the car turns and drives back down the road")
-	_press(app, "Restart")
-	_check(app.state == app.State.PLAYING and game.playing and not is_instance_valid(game._finale)
-		and game._camera.current and is_zero_approx(game.progress.distance),
-		"restarting after the finale restores the normal camera and highway")
+		and game._player.lane == 0, "all three board and the car starts the chase on the return route")
+	var incoming: TrafficCar = game._traffic[0]
+	var before := incoming.position.z
+	await _frames(4)
+	_check(incoming.position.z > before and is_equal_approx(incoming.rotation.y, PI),
+		"oncoming traffic faces and drives toward the player")
+	var rescue_lines: Array[String] = []
+	game.rescue_subtitle.connect(func(_speaker: String, line: String) -> void:
+		if not line.is_empty():
+			rescue_lines.append(line)
+	)
+	var traffic_clear := true
+	_send_key(KEY_W)
+	for frame in 1600:
+		await physics_frame
+		if app.state != app.State.PLAYING:
+			break
+		var nearest_z := -INF
+		var safe_lane := int(game._player.lane)
+		for vehicle: TrafficCar in game._traffic:
+			if vehicle.position.z > nearest_z and vehicle.position.z <= 5.5:
+				nearest_z = vehicle.position.z
+				safe_lane = vehicle.pursuit_gap
+			for police in game._police:
+				if absf(police.position.z - vehicle.position.z) < (3.7 + vehicle.length) * 0.5:
+					traffic_clear = traffic_clear and absf(police.position.x - vehicle.position.x) > TrafficCar.WIDTH
+		_move_to_lane(game, safe_lane)
+	_send_key(KEY_W, false, false)
+	_check(traffic_clear, "the two police cars avoid oncoming traffic for the full chase")
+	_check(app.state == app.State.FINALE and not game.playing and is_instance_valid(game._rescue),
+		"reaching the edge triggers the helicopter rescue")
+	var rescue_frames := 0
+	while app.state == app.State.FINALE and rescue_frames < 6000:
+		await physics_frame
+		rescue_frames += 1
+	_check(rescue_frames >= 2700 and rescue_lines.size() == 13, "the rescue and helicopter escape play their full dialogue")
+	if app.state == app.State.CITY:
+		_check(not game._rescue._broken_blade.visible and game._rescue._jumpers.size() == 2
+			and app._city.player.camera.current, "the two passengers jump and control passes to the driver's first-person camera")
+	_check(app.state == app.State.CITY and app.run_saved
+		and int(app.profile.data.best_distance) == int(game.FINALE_DISTANCE + game.CHASE_LENGTH),
+		"the helicopter escape saves the driving distance and starts the city phase")
+	if app.state == app.State.CITY:
+		await _check_city(app)
+	app._show_menu()
+	_check(not is_instance_valid(app._city) and game._camera.current, "the menu restores the road camera")
+
+
+func _check_city(app: Node) -> void:
+	var city = app._city
+	var player = city.player
+	player.position = Vector3(20, 22, 22)
+	player.velocity = Vector3(0, -12, 0)
+	_send_key(KEY_SPACE)
+	_send_key(KEY_SPACE, false, false)
+	for frame in 360:
+		if player.phase == player.Phase.GROUND or app.state != app.State.CITY:
+			break
+		await physics_frame
+	_check(app.state == app.State.CITY and player.phase == player.Phase.GROUND and player.damage.alive,
+		"deploying a parachute lands safely and enables first-person ground movement")
+	if app.state == app.State.CITY:
+		await _frames(2)
+		await _wait_city_cinematic(city.story)
+		var landed: Vector3 = player.position
+		_send_key(KEY_W)
+		await _frames(25)
+		_send_key(KEY_W, false, false)
+		_check(player.position.z < landed.z - 0.5, "W walks forward on the ground")
+		_send_key(KEY_SPACE)
+		_send_key(KEY_SPACE, false, false)
+		await _frames(12)
+		_check(player.position.y > landed.y + 0.35, "Space jumps on the ground")
+	app._start_city()
+	player = app._city.player
+	player.position = Vector3(20, 6, 20)
+	player.velocity = Vector3(0, -45, 0)
+	await _frames(30)
+	_check(app.state == app.State.CITY_OVER, "an impact without a parachute is fatal")
+	if app.state != app.State.CITY_OVER:
+		return
+	_press(app, "Restart drop")
+	player = app._city.player
+	app._city.story.stage = app._city.story.Stage.CAFE
+	var car: CharacterBody3D = app._city.traffic.vehicles[0]
+	player.phase = player.Phase.GROUND
+	player.position = car.position - car.basis.z * 2.45
+	var before_impact: Vector3 = player.position
+	player.velocity = Vector3.ZERO
+	await _frames(30)
+	_check(app.state == app.State.CITY and player.damage.alive and player.position.distance_to(before_impact) > 0.45,
+		"a moving car knocks the player back without ending the run")
+	app._start_city()
+	player = app._city.player
+	app._city.story.stage = app._city.story.Stage.CAFE
+	player.phase = player.Phase.GROUND
+	player.position = Vector3(0, 0.05, -23)
+	player.velocity = Vector3.ZERO
+	await _frames(330)
+	_check(app.state == app.State.CITY and player.damage.hp > 0 and player.damage.hp < player.damage.MAX_HP,
+		"enemy bullets drain the player's health without killing in one hit")
+	await _check_city_interactions(app)
+	await _check_city_vehicles(app)
+	await _check_city_story(app)
+
+
+func _check_city_interactions(app: Node) -> void:
+	app._start_city()
+	var city = app._city
+	var player = city.player
+	city.story.stage = city.story.Stage.CAFE
+	player.phase = player.Phase.GROUND
+	player.position = Vector3(5.1, 0.10, -22.0)
+	player.velocity = Vector3.ZERO
+	player.camera.look(Vector2(0, -243))
+	await _frames(27)
+	var guard: Area3D = city.npcs._guards[0]
+	_fire_pistol()
+	await _frames(8)
+	_check(is_instance_valid(guard) and guard.get_node("Health").current_health < 100.0 and city.hud._hit_time > 0.0,
+		"left click fires through the sights and damages the guard")
+	await _frames(10)
+	_fire_pistol()
+	await _frames(6)
+	_check(not is_instance_valid(guard) and city.hud._lethal, "a second body hit disables and drops the guard")
+
+	app._start_city()
+	city = app._city
+	city.story.stage = city.story.Stage.CAFE
+	player = city.player
+	var venue = city.places.venues[0]
+	player.phase = player.Phase.GROUND
+	player.position = venue.threshold + Vector3(0, 0.02, 1.45)
+	player.velocity = Vector3.ZERO
+	await _frames(5)
+	_send_key(KEY_E)
+	_send_key(KEY_E, false, false)
+	await _frames(27)
+	_check(venue.door.opened, "E opens the cafe's physical door")
+	_send_key(KEY_W)
+	await _frames(38)
+	_send_key(KEY_W, false, false)
+	_check(player.position.z < venue.threshold.z - 0.45, "the cafe interior can be entered on foot")
+
+
+func _fire_pistol() -> void:
+	var event := InputEventMouseButton.new()
+	event.button_index = MOUSE_BUTTON_LEFT
+	event.pressed = true
+	Input.parse_input_event(event)
+	Input.flush_buffered_events()
+	event = InputEventMouseButton.new()
+	event.button_index = MOUSE_BUTTON_LEFT
+	event.pressed = false
+	Input.parse_input_event(event)
+	Input.flush_buffered_events()
+
+
+func _check_city_story(app: Node) -> void:
+	app._start_city()
+	var city = app._city
+	var player = city.player
+	var story = city.story
+	var durations: Array[float] = []
+	var titles: Array[String] = []
+	var camera_changes: Array[bool] = []
+	story.cinematic_changed.connect(func(active: bool) -> void: camera_changes.append(active))
+	story.cinema.clip_finished.connect(func() -> void:
+		durations.append(story.cinema._elapsed)
+		titles.append(story.cinema.title))
+	player.phase = player.Phase.GROUND
+	player.position = city.places.venues[0].inside
+	player.velocity = Vector3.ZERO
+	player.rotation.y = -PI * 0.5
+	player.camera.look(Vector2(0, -265))
+	await _frames(14)
+	_check(story.cinematic and not player.camera.current, "landing switches to an animated camera")
+	await _wait_city_cinematic(story)
+	_check(story.stage == story.Stage.CAFE, "landing starts the reunion at the cafe")
+	var ally: Area3D = story._allies[0]
+	_fire_pistol()
+	await _frames(5)
+	_check(is_instance_valid(ally) and ally.visible and city.hud._hit_time <= 0.0
+		and city.hud._alert.text == "Ally · hold your fire", "a shot into the princess is blocked without damage")
+	_send_key(KEY_E)
+	_send_key(KEY_E, false, false)
+	await _frames(18)
+	var driver: Node3D = story.cinema._cast[0]
+	var princess: Node3D = story.cinema._cast[1]
+	var toward: Vector3 = driver.position.direction_to(princess.position)
+	_check((-driver.basis.z).dot(toward) > 0.98 and (-princess.basis.z).dot(-toward) > 0.98,
+		"the two speakers in the cafe face each other")
+	await _wait_city_cinematic(story)
+	_check(camera_changes == [true, false, true, false] and player.camera.current,
+		"the three cafe shots keep control locked and restore the first-person camera once")
+	_check(story.stage == story.Stage.BUS and story._bus_moving, "the cafe reunion starts the bus route")
+	story._bus.route.queue_free()
+	story._bus.route = null
+	await _frames(3)
+	await _wait_city_cinematic(story)
+	_check(not story._bus_moving and story._allies[1].visible, "the friend gets out even if the bus is stopped early")
+	for next_stage in [story.Stage.WRECK, story.Stage.RADIO, story.Stage.ESCAPE]:
+		player.position = story.destination
+		player.velocity = Vector3.ZERO
+		await _frames(2)
+		_send_key(KEY_E)
+		_send_key(KEY_E, false, false)
+		await _wait_city_cinematic(story)
+		_check(story.stage == next_stage, "the reunion, rescue, and broadcast advance the story")
+	var getaway = city.traffic.vehicles.back()
+	player.position = getaway.to_global(Vector3(-2.0, 0.04, 0))
+	await _frames(3)
+	_send_key(KEY_F)
+	_send_key(KEY_F, false, false)
+	await _frames(90)
+	getaway.position = Vector3(2189, 0.02, -2.6)
+	await _frames(6)
+	var freeze: float = story.remaining
+	await _frames(90)
+	_check(story.cinematic and is_equal_approx(story.remaining, freeze), "the highway chase animation freezes the countdown")
+	await _wait_city_cinematic(story)
+	await _frames(3)
+	_check(city.traffic._police.size() == 5, "five physical police cruisers deploy on the highway")
+	player.position = Vector3(1850, 0.02, -2.6)
+	for index in 6:
+		city.npcs._update_patrols(3.0)
+	_check(city.npcs._patrols.size() >= 15 and city.npcs._patrols.size() <= 19,
+		"the final pursuit obeys the reduced reinforcement limit")
+
+	app._start_city()
+	city = app._city
+	city.story.stage = city.story.Stage.CAFE
+	player = city.player
+	player.phase = player.Phase.GROUND
+	player.position = Vector3(160, 0.10, 151)
+	player.velocity = Vector3.ZERO
+	player.camera.look(Vector2(0, -265))
+	var witness = city.crowd._walkers[0]
+	await _frames(16)
+	witness.body.position = player.position + Vector3(0, 0, -3.5)
+	witness.wait = 20.0
+	witness.active = true
+	witness.body.show()
+	witness.body.set_targetable(true)
+	await _frames(3)
+	_fire_pistol()
+	await _frames(6)
+	_check(witness.dead and witness not in city.crowd._walkers and city.hud._lethal,
+		"a pedestrian dies from a headshot and leaves the active crowd")
+	var parked = city.traffic.park_vehicle(0, Color.SLATE_GRAY, Vector3(161, 0, 149), 0.0)
+	player.position = parked.to_global(Vector3(-4.0, 0.0, parked.seat().z))
+	player.rotation.y = -PI * 0.5
+	player.camera.look(Vector2(0, 43))
+	await _frames(24)
+	_fire_pistol()
+	await _frames(17)
+	_check(parked.driver_target and parked.driver_target.health.current_health < 100.0,
+		"a pistol shot through the side window damages the driver")
+	_fire_pistol()
+	await _frames(6)
+	_check(parked.driver == null and city.hud._lethal, "a second shot kills the driver")
+
+	app._start_city(city.story.Start.ESCAPE)
+	city = app._city
+	story = city.story
+	_check(story.stage == story.Stage.ESCAPE and is_equal_approx(story.remaining, 120.0),
+		"the final chapter starts a two-minute countdown")
+	app._pause_city()
+	await _frames(10)
+	_check(is_equal_approx(story.remaining, 120.0), "pausing freezes the escape countdown")
+	app._resume_city()
+	story.remaining = 0.03
+	await _frames(10)
+	_check(app.state == app.State.CITY_OVER, "missing the launch deadline fails the mission")
+	_press(app, "Restart escape")
+	city = app._city
+	story = city.story
+	player = city.player
+	story.cinema.clip_finished.connect(func() -> void:
+		durations.append(story.cinema._elapsed)
+		titles.append(story.cinema.title))
+	player.position = story.HATCH
+	await _frames(4)
+	_send_key(KEY_E)
+	_send_key(KEY_E, false, false)
+	for frame in 1260:
+		if story.ignition_pending:
+			break
+		await physics_frame
+	_check(story.ignition_pending and is_zero_approx(story.launch_throttle),
+		"Erik has to raise the launch thrust from inside the rocket")
+	_send_key(KEY_W)
+	await _wait_city_cinematic(story)
+	_send_key(KEY_W, false, false)
+	await _frames(2)
+	_check(app.state == app.State.SPACE and is_instance_valid(app._space),
+		"boarding the rocket before impact hands over flight controls to Erik")
+	_check(titles.size() == 15 and titles.size() == durations.size() and durations.min() >= 20.0,
+		"all fifteen city cutscenes run for at least twenty seconds before launch")
+	if app.state == app.State.SPACE:
+		await _check_space_flight(app)
+
+
+func _check_space_flight(app: Node) -> void:
+	var flight = app._space
+	var speed: float = -flight.flight_velocity.z
+	for code in [KEY_A, KEY_S, KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN, KEY_SPACE]:
+		_send_key(code, false, false)
+	_send_key(KEY_D)
+	_send_key(KEY_W)
+	await _frames(43)
+	_send_key(KEY_D, false, false)
+	_send_key(KEY_W, false, false)
+	_check(flight.world.ship.position.x > 2.0 and -flight.flight_velocity.z > speed,
+		"Erik steers and adjusts rocket throttle using keyboard input")
+	var rock = flight._rocks.back()
+	rock.origin = flight.world.ship.position - Vector3(0, 0, 3.0)
+	rock.drift = Vector2.ZERO
+	await _frames(5)
+	_check(flight.hull == 66, "an asteroid hit damages the hull once")
+	flight.world.ship.position.z = -flight.TRANSFER + 0.2
+	await _frames(4)
+	_check(flight.phase == flight.Phase.DESCENT and flight.world.surface.visible,
+		"clearing the asteroid field starts descent to the Vesper base")
+	flight.world.ship.position = Vector3(0, 0.90, 0)
+	flight.flight_velocity = Vector3(0, -8.0, 0)
+	await _frames(4)
+	_check(app.state == app.State.SPACE_OVER, "a fast touchdown fails even in the center of the pad")
+	_press(app, "Retry landing")
+	flight = app._space
+	_check(flight.phase == flight.Phase.DESCENT, "landing can be retried without repeating the asteroid field")
+	flight.world.ship.position = Vector3(0.55, 0.87, 0.65)
+	flight.flight_velocity = Vector3(0, -1.2, 0)
+	await _frames(10)
+	_check(flight.phase == flight.Phase.TOUCHDOWN and flight.hud._speaker == 3,
+		"a centered gentle landing plays the crew's animated touchdown conversation")
+	await _frames(1210)
+	_check(app.state == app.State.SPACE_COMPLETE, "the mission completes after the twenty-second landing dialogue")
+
+
+func _wait_city_cinematic(story: Node) -> void:
+	for frame in 5300:
+		if not is_instance_valid(story) or not story.cinematic:
+			break
+		await physics_frame
+
+
+func _check_city_vehicles(app: Node) -> void:
+	app._start_city()
+	var city = app._city
+	var player = city.player
+	city.story.stage = city.story.Stage.CAFE
+	var vehicle: CharacterBody3D = city.traffic.vehicles[0]
+	vehicle.route.queue_free()
+	vehicle.route = null
+	vehicle.position = Vector3(10, 0, 2.8)
+	vehicle.rotation.y = -PI * 0.5
+	vehicle.speed = 0.0
+	player.phase = player.Phase.GROUND
+	player.position = vehicle.to_global(Vector3(-2.06, 0.04, 0.05))
+	player.velocity = Vector3.ZERO
+	await _frames(5)
+	_check(city.traffic.nearby == vehicle, "a nearby driver's door offers the hijack prompt")
+	_send_key(KEY_F)
+	_send_key(KEY_F, false, false)
+	await _frames(92)
+	_check(player.mounted and city.traffic.driven == vehicle and player.camera.get_parent() == vehicle
+		and vehicle.driver == null and vehicle.dashboard.visible, "hijacking ejects the driver and puts the player at the dashboard")
+	_send_key(KEY_W)
+	await _frames(35)
+	_send_key(KEY_W, false, false)
+	_check(vehicle.speed > 3.0, "W accelerates the hijacked vehicle")
+	vehicle.position = Vector3(19.0, 0.02, 3.0)
+	vehicle.rotation.y = PI
+	vehicle.velocity = Vector3.ZERO
+	vehicle.speed = 0.0
+	_send_key(KEY_W)
+	await _frames(68)
+	_send_key(KEY_W, false, false)
+	_check(vehicle.position.z > 6.5 and player.damage.alive, "the suspension crosses the bevelled curb onto the park sidewalk")
+	_send_key(KEY_F)
+	_send_key(KEY_F, false, false)
+	await _frames(28)
+	_check(not player.mounted and player.camera.get_parent() == player, "F returns control to the pedestrian")
+
+	app._start_city()
+	city = app._city
+	var bus: CharacterBody3D
+	for candidate in city.traffic.vehicles:
+		if candidate.type_index == 5:
+			bus = candidate
+			break
+	var route := bus.route.get_parent() as Path3D
+	bus.route.progress = route.curve.get_closest_offset(bus.bus_stops[0]) - 7.0
+	bus.position = bus.route.global_position
+	bus.rotation.y = -PI * 0.5
+	bus.speed = 7.0
+	city.player.set_enabled(false)
+	var starts: Array[Vector3] = []
+	for walker in city.crowd._walkers:
+		starts.append(walker.body.position)
+	await _frames(160)
+	_check(bus.dwell > 0.0 and not city.crowd._passengers.get(bus, []).is_empty(),
+		"the bus stops at the shelter and boards waiting pedestrians")
+	await _frames(250)
+	var walkers_moving := 0
+	for index in city.crowd._walkers.size():
+		var walker = city.crowd._walkers[index]
+		if walker.idle_mode == 0 and walker.body.position.distance_to(starts[index]) > 0.10:
+			walkers_moving += 1
+	_check(walkers_moving > 5, "navigation agents move along the sidewalks")
+
+
+func _check_chapters(app: Node) -> void:
+	app._show_menu()
+	_press(app, "Chapters")
+	_press(app, "Crystal Cavern")
+	_check(app.state == app.State.PLAYING and app.game.progress.distance > RoadGenerator.RAMP_END
+		and app.game._player.position.y == -RoadGenerator.CAVE_DEPTH and app.run_saved, "the cavern chapter opens in the cave")
+	app._show_menu()
+	_press(app, "Chapters")
+	_press(app, "Police pursuit")
+	_check(app.state == app.State.PLAYING and app.game._pursuing and app.game._police.size() == 2,
+		"the pursuit chapter starts with the police behind the player")
+	app._show_menu()
+	_press(app, "Chapters")
+	_press(app, "Helicopter escape")
+	_check(app.state == app.State.FINALE and app.game._rescue._crew.size() == 3,
+		"the helicopter chapter opens with all three passengers aboard")
+	app._show_menu()
+	_press(app, "Chapters")
+	_press(app, "Skydive and city")
+	_check(app.state == app.State.CITY and app._city.player.camera.current, "the drop can be started from Chapters")
+	_check(app._city.npcs._guards.size() == 8, "the city starts with eight fixed police officers")
+	app._show_menu()
+	_press(app, "Chapters")
+	_press(app, "Helicopter Wreck")
+	var wreck = app._city
+	_check(app.state == app.State.CITY and wreck.story.stage == wreck.story.Stage.WRECK
+		and wreck.player.phase == wreck.player.Phase.GROUND and wreck.player.damage.alive
+		and wreck.player.position.distance_to(wreck.story.destination) < 10.0
+		and wreck.player.camera.current, "the wreck chapter starts beside the crash with control of Erik")
+	app._pause_city()
+	_press(app, "Restart at wreck")
+	wreck = app._city
+	_check(wreck.story.stage == wreck.story.Stage.WRECK, "restarting keeps the wreck checkpoint")
+	app._show_menu()
 
 
 func _check_driving_controls_and_ground_route() -> void:

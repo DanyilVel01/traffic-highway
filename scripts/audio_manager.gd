@@ -22,6 +22,9 @@ func _ready() -> void:
 		"coin": _make_wave("coin", 0.27),
 		"crash": _make_wave("crash", 0.44),
 		"shot": _make_wave("shot", 0.18),
+		"horn": _make_wave("horn", 0.37),
+		"siren": _make_wave("siren", 2.5),
+		"panic": preload("res://assets/city/look_out.wav"),
 	}
 	if DisplayServer.get_name() != "headless":
 		music.play()
@@ -53,6 +56,22 @@ func play_cue(cue: String) -> void:
 	player.stream = cues[cue]
 	player.finished.connect(player.queue_free)
 	player.play()
+
+
+func play_shot_at(at: Vector3) -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	var report := AudioStreamPlayer3D.new()
+	report.bus = EFFECTS
+	report.stream = cues["shot"]
+	report.volume_db = -11.0
+	report.pitch_scale = randf_range(0.94, 1.08)
+	report.unit_size = 6.0
+	report.max_distance = 85.0
+	add_child(report)
+	report.global_position = at
+	report.finished.connect(report.queue_free)
+	report.play()
 
 
 func _create_bus(bus_name: StringName) -> void:
@@ -101,6 +120,11 @@ func _make_wave(kind: String, seconds: float, looped: bool = false) -> AudioStre
 				sample = (noise.randf_range(-1.0, 1.0) * 0.48 + sin(TAU * (88.0 * time - 58.0 * time * time)) * 0.6) * exp(-time * 10.0)
 			"shot":
 				sample = (noise.randf_range(-1.0, 1.0) * 0.64 + sin(TAU * 138.0 * time) * 0.36) * exp(-time * 29.0)
+			"horn":
+				sample = (sin(TAU * 338.0 * time) + sin(TAU * 427.0 * time) * 0.7) * 0.28 * exp(-time * 2.3)
+			"siren":
+				var modulation := 18.0 * sin(TAU * time / 1.22)
+				sample = sin(TAU * 632.0 * time + modulation) * 0.21 * sin(PI * time / seconds)
 			_:
 				sample = sin(TAU * 420.0 * time) * exp(-time * 45.0)
 		if not looped:
