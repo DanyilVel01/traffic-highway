@@ -30,7 +30,6 @@ var _shooter: Target
 var _aim_time := 0.0
 var _cooldown := 1.0
 var _pressure := 0
-var _sweep := 0.0
 var _volley := 0.0
 var _rng := RandomNumberGenerator.new()
 var _patrols: Array[Target] = []
@@ -47,20 +46,13 @@ func set_cinematic(value: bool) -> void:
 
 func set_pressure(level: int) -> void:
 	_pressure = level
-	_sweep = 0.4
 	_volley = 1.8
 	alert.emit("Police reinforcements inbound")
-
-
-func fire_from_cruiser(at: Vector3) -> void:
-	if not _cinematic and player.damage.alive:
-		ballistics.fire_hostile(at, _target_point() + Vector3(0, _rng.randf_range(0.0, 0.3), _rng.randf_range(-0.9, 0.9)))
 
 
 func build(target: Player, use_drop_allies: bool) -> void:
 	player = target
 	_events = get_node("/root/CityEvents") as Events
-	_events.police_called.connect(_respond_to_report)
 	add_child(ballistics)
 	ballistics.bind_player(player)
 	ballistics.hit_confirmed.connect(hit_confirmed.emit)
@@ -89,21 +81,15 @@ func build(target: Player, use_drop_allies: bool) -> void:
 	_add_guard(Vector3(1760, 0, -8.1))
 
 
-func _respond_to_report(at: Vector3) -> void:
-	if _guards.size() >= 11 or not player.damage.alive:
-		return
-	var dispatch := create_tween()
-	dispatch.tween_interval(2.5)
-	await dispatch.finished
-	if not player.damage.alive or _cinematic or _guards.size() >= 11:
-		return
-	var z := clampf(at.z + (26.0 if at.z < 110.0 else -26.0), -145.0, 145.0)
-	_add_guard(Vector3(snappedf(at.x, 40.0) + 4.5, 0.05, z))
-	alert.emit("Police responding · stay out of sight")
+func deploy_officer(actor: Actor) -> void:
+	var officer := _add_guard(actor.global_position, actor)
+	_patrols.append(officer)
+	_patrol_timer[officer] = _rng.randf_range(1.25, 2.4)
+	alert.emit("Police on foot · find cover")
 
 
 func _physics_process(delta: float) -> void:
-	if not player.damage.alive:
+	if _cinematic or not player.damage.alive:
 		return
 	_elapsed += delta
 	_move_teammates()
@@ -112,8 +98,7 @@ func _physics_process(delta: float) -> void:
 	_ground_time += delta
 	if _ground_time > 2.5:
 		_aim_guard(delta)
-	if _pressure > 0:
-		_update_patrols(delta)
+	_update_patrols(delta)
 
 
 func _move_teammates() -> void:
@@ -157,13 +142,18 @@ func _make_canopy(actor: Actor, index: int) -> Node3D:
 	return canopy
 
 
-func _add_guard(point: Vector3) -> Target:
+func _add_guard(point: Vector3, actor: Actor = null) -> Target:
 	var guard := Target.new()
 	add_child(guard)
-	guard.position = point
-	var actor := Actor.new()
-	guard.add_child(actor)
-	actor.build(Actor.Role.DRIVER, Color("#4e3a59"))
+	guard.global_position = point
+	if actor == null:
+		actor = Actor.new()
+		guard.add_child(actor)
+		actor.build(Actor.Role.DRIVER, Color("#4e3a59"))
+	else:
+		actor.reparent(guard)
+		actor.position = Vector3.ZERO
+		actor.stride(0.0, false)
 	guard.bind(actor, Target.HOSTILE, Vector3(0.9, 2.2, 0.8))
 	guard.health.hit.connect(_react_to_hit.bind(guard))
 	guard.health.died.connect(_drop_guard.bind(guard))
@@ -195,7 +185,6 @@ func _drop_guard(_at: Vector3, _impulse: Vector3, guard: Target) -> void:
 
 
 func _update_patrols(delta: float) -> void:
-	_sweep -= delta
 	_volley -= delta
 	var center := player.global_position
 	for index in range(_patrols.size() - 1, -1, -1):
@@ -218,7 +207,7 @@ func _update_patrols(delta: float) -> void:
 				var floor_hit := ballistics.cast(next + Vector3.UP * 0.8, next - Vector3.UP * 1.35, Player.WORLD_LAYER)
 				if not floor_hit.is_empty() and floor_hit.normal.y > 0.6:
 					officer.global_position = floor_hit.position
-					actor.face(offset)
+					actor.face(officer.to_local(center))
 					actor.stride(_elapsed * 5.4 + index, true)
 		var ready: float = _patrol_timer[officer]
 		if distance < 48.0 and _sees_player(officer):
@@ -233,26 +222,6 @@ func _update_patrols(delta: float) -> void:
 			actor.lower_weapon()
 			ready = maxf(ready, 0.72)
 		_patrol_timer[officer] = ready
-	if _sweep > 0.0:
-		return
-	_sweep = 2.6
-	var capacity := [0, 7, 13, 19][_pressure] as int
-	for index in mini(capacity - _patrols.size(), 5):
-		_spawn_patrol(center, index)
-
-
-func _spawn_patrol(center: Vector3, index: int) -> void:
-	for attempt in 6:
-		var angle := index * TAU / 5.0 + _rng.randf_range(-0.52, 0.52)
-		var ring := Vector3(cos(angle), 0, sin(angle)) * _rng.randf_range(18.0, 39.0)
-		var spot := center + ring
-		var ground := ballistics.cast(spot + Vector3.UP * 4.0, spot - Vector3.UP * 7.0, Player.WORLD_LAYER)
-		if ground.is_empty() or ground.normal.y < 0.73 or absf(ground.position.y - center.y) > 2.8:
-			continue
-		var officer := _add_guard(ground.position)
-		_patrols.append(officer)
-		_patrol_timer[officer] = _rng.randf_range(1.25, 2.4)
-		return
 
 
 func _aim_guard(delta: float) -> void:
@@ -272,7 +241,7 @@ func _aim_guard(delta: float) -> void:
 	_aim_time -= delta
 	if _aim_time > 0.0:
 		return
-	if _sees_player(_shooter):
+	if _shooter.position.distance_to(player.position) < 43.0 and _sees_player(_shooter):
 		var start := actor.muzzle.global_position
 		var target := _target_point()
 		ballistics.fire_hostile(start, target)

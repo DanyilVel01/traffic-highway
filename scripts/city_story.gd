@@ -35,6 +35,8 @@ var destination := Vector3.ZERO
 var player: Player
 var cinema := Cinema.new()
 var cinematic := false
+var _launch_tween: Tween
+var _launch_finished := false
 var ignition_pending := false
 var launch_throttle := 0.0
 var _traffic: Traffic
@@ -387,18 +389,23 @@ func _launch() -> void:
 	_cut_camera.make_current()
 	dialogue.emit("Pilot / Erik, you're in control. Bring the engines up to seventy percent.")
 	ignition_pending = true
-	while launch_throttle < 0.70:
+	while not _launch_finished and launch_throttle < 0.70:
 		await get_tree().physics_frame
 		var input := float(Input.is_physical_key_pressed(KEY_W)) - float(Input.is_physical_key_pressed(KEY_S))
 		launch_throttle = clampf(launch_throttle + input * get_physics_process_delta_time() * 0.49, 0.0, 1.0)
+	if _launch_finished:
+		return
 	ignition_pending = false
 	dialogue.emit("Pilot / Ignition. Hold her steady.")
 	await get_tree().create_timer(1.1, false).timeout
+	if _launch_finished:
+		return
 	_flame.show()
 	var lift := create_tween().set_parallel().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	lift.tween_property(_rocket, "position:y", 230.0, 17.5)
 	lift.tween_property(_cut_camera, "position:y", 189.0, 17.5)
 	lift.tween_method(_track_rocket, 0.0, 1.0, 17.5)
+	_launch_tween = lift
 	await lift.finished
 	_cut_camera.look_at(RADIO + Vector3.UP * 45.0)
 	var blast := Shapes.attach(self, SphereMesh.new(), RADIO + Vector3.UP * 11.0, ACCENT)
@@ -406,8 +413,27 @@ func _launch() -> void:
 	var bloom := create_tween()
 	bloom.tween_property(blast, "scale", Vector3.ONE * 240.0, 1.65).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	_show_flash(0.86)
+	_launch_tween = bloom
 	await bloom.finished
 	blast.queue_free()
+	_finish_launch()
+
+
+func can_skip_launch() -> bool:
+	return stage == Stage.LAUNCH and not _launch_finished
+
+
+func skip_launch() -> void:
+	if not can_skip_launch():
+		return
+	if _launch_tween and _launch_tween.is_valid():
+		_launch_tween.kill()
+	_finish_launch()
+
+
+func _finish_launch() -> void:
+	_launch_finished = true
+	ignition_pending = false
 	dialogue.emit("Pilot / Erik, take the controls. Vesper is straight ahead.")
 	finished.emit()
 

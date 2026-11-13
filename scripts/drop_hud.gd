@@ -92,7 +92,7 @@ func _ready() -> void:
 
 func say(line: String) -> void:
 	_dialogue.text = line
-	_dialogue_time = clampf(line.length() * 0.052, 3.0, 6.3)
+	_dialogue_time = 0.0 if line.is_empty() else clampf(line.length() * 0.052, 3.0, 6.3)
 
 
 func notify(message: String) -> void:

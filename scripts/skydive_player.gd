@@ -23,6 +23,7 @@ var mounted := false
 var altitude_agl := DROP_HEIGHT
 var moisture := 0.0
 var _enabled := true
+var _vehicle_transition := false
 var _canopy_timer := CANOPY_OPEN_TIME
 var _opening_velocity := Vector3.ZERO
 var _hit_lock := 0.0
@@ -50,11 +51,20 @@ func _ready() -> void:
 
 func set_enabled(value: bool) -> void:
 	_enabled = value
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if value else Input.MOUSE_MODE_VISIBLE
+	_update_mouse_mode()
+
+
+func set_vehicle_transition(active: bool) -> void:
+	_vehicle_transition = active
+	_update_mouse_mode()
+
+
+func _update_mouse_mode() -> void:
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if _enabled and not _vehicle_transition else Input.MOUSE_MODE_VISIBLE
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if not _enabled or not damage.alive:
+	if not _enabled or _vehicle_transition or not damage.alive:
 		return
 	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_F:
 		vehicle_requested.emit()

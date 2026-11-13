@@ -76,13 +76,21 @@ func _physics_process(delta: float) -> void:
 	_elapsed += delta
 	_update(minf(_elapsed / DURATION, 1.0), delta)
 	if _elapsed >= DURATION:
-		active = false
-		_set.queue_free()
-		_cast.clear()
-		_roles.clear()
-		_start.clear()
-		_vehicles.clear()
-		clip_finished.emit()
+		finish_clip()
+
+
+func finish_clip() -> void:
+	if not active:
+		return
+	active = false
+	_set.hide()
+	_set.process_mode = Node.PROCESS_MODE_DISABLED
+	_set.queue_free()
+	_cast.clear()
+	_roles.clear()
+	_start.clear()
+	_vehicles.clear()
+	clip_finished.emit()
 
 
 func _stage() -> void:

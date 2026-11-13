@@ -75,7 +75,7 @@ func _ready() -> void:
 	story.cinematic_shot.connect(shot.emit)
 	story.cinema.siren.connect(siren.emit)
 	traffic.siren.connect(siren.emit)
-	traffic.police_fire.connect(npcs.fire_from_cruiser)
+	traffic.officer_exited.connect(npcs.deploy_officer)
 	story.finished.connect(_on_escape)
 	story.build(player, traffic, places, start)
 	player.door_requested.connect(_interact)

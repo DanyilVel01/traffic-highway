@@ -2,6 +2,7 @@ extends Node3D
 
 const World = preload("res://scripts/vesper_world.gd")
 const HUD = preload("res://scripts/space_flight_hud.gd")
+const Epilogue = preload("res://scripts/vesper_epilogue.gd")
 const TRANSFER := 3050.0
 const GRAVITY := 6.4
 const THRUST := 14.0
@@ -13,8 +14,9 @@ const MAX_TOUCHDOWN_TILT := 0.125
 
 signal failed(reason: String)
 signal landed
+signal epilogue_started
 
-enum Phase { CRUISE, DESCENT, TOUCHDOWN, LOST }
+enum Phase { CRUISE, DESCENT, TOUCHDOWN, LOST, EPILOGUE }
 
 class Rock:
 	var mesh: MeshInstance3D
@@ -26,8 +28,10 @@ class Rock:
 
 var world := World.new()
 var hud := HUD.new()
+var epilogue: Epilogue
 var phase := Phase.CRUISE
 var landing_start := false
+var landed_start := false
 var hull := 100
 var fuel := 100.0
 var throttle := 0.59
@@ -78,16 +82,24 @@ func _ready() -> void:
 	add_child(hud)
 	_build_field()
 	world.ship.rotation.x = -PI * 0.5
-	if landing_start:
+	if landing_start or landed_start:
 		_begin_descent()
-	_update_camera(0.0)
+	if landed_start:
+		world.ship.position = Vector3.UP * World.PAD_Y
+		world.update_pad(world.ship.position, true)
+		_touchdown()
+		finish_touchdown()
+	else:
+		_update_camera(0.0)
 
 
 func set_active(active: bool) -> void:
 	_flight_enabled = active
 	hud.pause_voice(not active)
 	process_mode = Node.PROCESS_MODE_INHERIT if active else Node.PROCESS_MODE_DISABLED
-	hud.visible = active
+	hud.visible = active and phase != Phase.EPILOGUE
+	if is_instance_valid(epilogue):
+		epilogue.set_active(active)
 
 
 func retry_at_landing() -> bool:
@@ -95,7 +107,7 @@ func retry_at_landing() -> bool:
 
 
 func _physics_process(delta: float) -> void:
-	if not _flight_enabled or phase == Phase.LOST:
+	if not _flight_enabled or phase in [Phase.LOST, Phase.EPILOGUE]:
 		return
 	_clock += delta
 	_phase_clock += delta
@@ -112,8 +124,7 @@ func _physics_process(delta: float) -> void:
 		Phase.TOUCHDOWN:
 			_talk(SUCCESS_LINES, 5.0)
 			if _phase_clock >= 20.0:
-				set_active(false)
-				landed.emit()
+				finish_touchdown()
 	world.flame.visible = phase == Phase.CRUISE or (phase == Phase.DESCENT and fuel > 0.0 and throttle > 0.02)
 	world.flame.scale = Vector3(0.84 + throttle * 0.22, 0.32 + throttle * 1.1, 0.84 + throttle * 0.22)
 	_update_camera(delta)
@@ -210,6 +221,25 @@ func _touchdown() -> void:
 	hud.show_landed()
 
 
+func finish_touchdown() -> void:
+	if phase != Phase.TOUCHDOWN or not _flight_enabled:
+		return
+	phase = Phase.EPILOGUE
+	world.flame.hide()
+	epilogue_started.emit()
+	hud.pause_voice(true)
+	hud.hide()
+	epilogue = Epilogue.new()
+	add_child(epilogue)
+	epilogue.finished.connect(_finish_epilogue)
+	epilogue.begin(world, _environment)
+
+
+func _finish_epilogue() -> void:
+	set_active(false)
+	landed.emit()
+
+
 func _fail(reason: String) -> void:
 	phase = Phase.LOST
 	world.flame.hide()
@@ -229,7 +259,7 @@ func _adjust_throttle(delta: float, rate: float) -> void:
 
 
 func _build_field() -> void:
-	if landing_start:
+	if landing_start or landed_start:
 		return
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 6219

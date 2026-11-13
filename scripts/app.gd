@@ -14,7 +14,8 @@ const PAPER: Color = Color("#f1f7f8")
 const MUTED: Color = Color("#a6bac6")
 const MINT: Color = Color("#70f5ce")
 const GOLD: Color = Color("#ffd288")
-const PAINT = VehicleVisual.PLAYER_PAINTS
+const Catalog = preload("res://scripts/garage_catalog.gd")
+const PAINT = Catalog.PAINTS
 const DRIVE_CONTROLS: String = "A / D  or  ← / →   STEER    ·    W / ↑   GAS    ·    S / ↓   BRAKE    ·    SPACE   DRIFT    ·    ESC   PAUSE"
 
 enum State { MENU, PLAYING, PAUSED, GAME_OVER, GARAGE, SETTINGS, INTRO, FINALE, CHAPTERS, CITY, CITY_PAUSED, CITY_OVER, SPACE, SPACE_PAUSED, SPACE_OVER, SPACE_COMPLETE }
@@ -27,6 +28,7 @@ var game: Node3D
 var overlay: Control
 var screen: Control
 var hud_values: Array[Label] = []
+var _nitro_label: Label
 var current_score: int = 0
 var current_distance: float = 0.0
 var current_coins: int = 0
@@ -40,6 +42,7 @@ var _subtitle_text: Label
 var _chapter: GameRules.Chapter = GameRules.Chapter.HIGHWAY
 var _city: CityPhase
 var _space: SpaceFlight
+var _skip_button: Button
 
 
 func _ready() -> void:
@@ -60,6 +63,7 @@ func _ready() -> void:
 	game.connect(&"city_started", _start_city)
 	_apply_shadows()
 	var layer := CanvasLayer.new()
+	layer.layer = 4
 	add_child(layer)
 	overlay = Control.new()
 	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -69,12 +73,67 @@ func _ready() -> void:
 	_show_menu()
 
 
+func _process(_delta: float) -> void:
+	if is_instance_valid(_skip_button):
+		_skip_button.visible = _skip_action().is_valid()
+	if is_instance_valid(_nitro_label):
+		_update_nitro_hud()
+
+
+func _skip_action() -> Callable:
+	match state:
+		State.INTRO:
+			return _finish_intro
+		State.FINALE:
+			return game.skip_cutscene
+		State.CITY:
+			if is_instance_valid(_city) and _city.story.cinema.active:
+				return _skip_city_clip
+			if is_instance_valid(_city) and _city.story.can_skip_launch():
+				return _city.story.skip_launch
+			if is_instance_valid(_city) and _city.traffic.can_skip_transition():
+				return _city.traffic.skip_transition
+		State.SPACE:
+			if is_instance_valid(_space):
+				if _space.phase == SpaceFlight.Phase.TOUCHDOWN:
+					return _space.finish_touchdown
+				if is_instance_valid(_space.epilogue) and _space.epilogue.can_skip():
+					return _space.epilogue.skip
+	return Callable()
+
+
+func _skip_city_clip() -> void:
+	_city.hud.say("")
+	_city.story.cinema.finish_clip()
+
+
+func _skip_animation() -> void:
+	var action := _skip_action()
+	if action.is_valid():
+		action.call()
+
+
+func _add_skip_button() -> void:
+	_skip_button = _button(screen, "Skip", _skip_animation)
+	_skip_button.name = "Skip"
+	_skip_button.focus_mode = Control.FOCUS_NONE
+	_skip_button.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	_skip_button.offset_left = -128
+	_skip_button.offset_right = -20
+	_skip_button.offset_top = 12
+	_skip_button.offset_bottom = 57
+	_skip_button.visible = _skip_action().is_valid()
+
+
 func _input(event: InputEvent) -> void:
 	if not event.is_action_pressed(&"ui_cancel") or event.is_echo():
 		return
+	var skip := _skip_action()
+	if skip.is_valid():
+		get_viewport().set_input_as_handled()
+		skip.call()
+		return
 	match state:
-		State.INTRO:
-			_finish_intro()
 		State.PLAYING:
 			_pause()
 		State.PAUSED:
@@ -87,7 +146,7 @@ func _input(event: InputEvent) -> void:
 			_pause_space()
 		State.SPACE_PAUSED:
 			_resume_space()
-		State.GARAGE, State.GAME_OVER, State.CHAPTERS, State.FINALE, State.CITY_OVER, State.SPACE_OVER, State.SPACE_COMPLETE:
+		State.GARAGE, State.GAME_OVER, State.CHAPTERS, State.CITY_OVER, State.SPACE_OVER, State.SPACE_COMPLETE:
 			_show_menu()
 		State.SETTINGS:
 			_close_settings()
@@ -103,6 +162,7 @@ func _notification(what: int) -> void:
 
 
 func _show_menu() -> void:
+	audio.music.stream_paused = false
 	_commit_run()
 	_remove_city()
 	_remove_space()
@@ -146,6 +206,7 @@ func _show_chapters() -> void:
 	_button(grid, "Helicopter Wreck", _start_city.bind(CityStory.Start.WRECK))
 	_button(grid, "Two Minutes to Impact", _start_city.bind(CityStory.Start.ESCAPE))
 	_button(grid, "Vesper Flight", _start_space)
+	_button(grid, "After Touchdown", _start_space.bind(true, true))
 	for button: Button in grid.get_children():
 		button.custom_minimum_size.x = 232
 	_button(stack, "Back", _show_menu)
@@ -156,13 +217,7 @@ func _start_intro() -> void:
 	_add_letterbox()
 	var title := _label(screen, "COASTAL MOTOR WORKS  /  PROLOGUE", 14, MINT)
 	title.position = Vector2(26, 8)
-	var hint := _label(screen, "ESC  SKIP", 14, MUTED)
-	hint.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	hint.offset_left = 26
-	hint.offset_right = -26
-	hint.offset_top = 8
-	hint.offset_bottom = 30
-	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_add_skip_button()
 	_build_subtitles()
 
 	_intro = GarageIntro.new()
@@ -316,7 +371,7 @@ func _add_city_restart(stack: VBoxContainer, primary: bool = false) -> void:
 		button.grab_focus()
 
 
-func _start_space(landing_start: bool = false) -> void:
+func _start_space(landing_start: bool = false, landed_start: bool = false) -> void:
 	_remove_city()
 	_remove_space()
 	game.prepare_city()
@@ -324,6 +379,9 @@ func _start_space(landing_start: bool = false) -> void:
 	_new_screen(State.SPACE)
 	_space = SpaceFlight.new()
 	_space.landing_start = landing_start
+	_space.landed_start = landed_start
+	audio.music.stream_paused = false
+	_space.epilogue_started.connect(func() -> void: audio.music.stream_paused = true)
 	_space.failed.connect(_show_space_failure)
 	_space.landed.connect(_show_space_success)
 	add_child(_space)
@@ -342,7 +400,7 @@ func _pause_space() -> void:
 	_new_screen(State.SPACE_PAUSED)
 	var stack := _dialog("VESPER TRANSFER", "Paused")
 	_button(stack, "Resume", _resume_space, true).grab_focus()
-	_button(stack, "Restart checkpoint", _start_space.bind(_space.retry_at_landing()))
+	_button(stack, "Restart checkpoint", _start_space.bind(_space.retry_at_landing(), _space.landed_start))
 	_button(stack, "Main Menu", _show_menu)
 
 
@@ -357,14 +415,15 @@ func _show_space_failure(reason: String) -> void:
 	var stack := _dialog("VESPER TRANSFER", "Flight lost")
 	_label(stack, reason, 21, MUTED)
 	_button(stack, "Retry landing" if _space.retry_at_landing() else "Retry flight",
-		_start_space.bind(_space.retry_at_landing()), true).grab_focus()
+		_start_space.bind(_space.retry_at_landing(), _space.landed_start), true).grab_focus()
 	_button(stack, "Main Menu", _show_menu)
 
 
 func _show_space_success() -> void:
 	_new_screen(State.SPACE_COMPLETE)
 	var stack := _dialog("MISSION COMPLETE", "Vesper Outpost 07")
-	_button(stack, "Replay landing", _start_space.bind(true), true).grab_focus()
+	_button(stack, "Replay ending", _start_space.bind(true, true), true).grab_focus()
+	_button(stack, "Replay landing", _start_space.bind(true))
 	_button(stack, "Main Menu", _show_menu)
 
 
@@ -389,6 +448,7 @@ func _show_pursuit() -> void:
 func _show_finale() -> void:
 	_new_screen(State.FINALE)
 	_add_letterbox()
+	_add_skip_button()
 
 
 func _show_rescue() -> void:
@@ -489,6 +549,19 @@ func _build_hud() -> void:
 	pause_button.custom_minimum_size.x = 120
 	pause_button.focus_mode = Control.FOCUS_NONE
 	_footer(DRIVE_CONTROLS)
+	_nitro_label = _label(screen, "", 19, MINT)
+	_nitro_label.position = Vector2(28, 98)
+	_update_nitro_hud()
+
+
+func _update_nitro_hud() -> void:
+	_nitro_label.visible = game.nitro_duration() > 0.0
+	if game.nitro_left > 0.0:
+		_nitro_label.text = "NITRO  %.1fs" % game.nitro_left
+	elif game.nitro_cooldown > 0.0:
+		_nitro_label.text = "NITRO RECHARGING  %.0fs" % ceilf(game.nitro_cooldown)
+	else:
+		_nitro_label.text = "R  ·  NITRO READY"
 
 
 func _update_stats(distance: float, score: int, coins: int, speed: float) -> void:
@@ -526,12 +599,17 @@ func _show_garage() -> void:
 		pick.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		pick.add_theme_color_override("font_color", INK if index == garage_index else PAINT[index])
 	_garage_preview(stack)
-	_label(stack, SaveManager.CAR_NAMES[garage_index], 28, PAINT[garage_index])
+	_label(stack, Catalog.NAMES[garage_index], 28, PAINT[garage_index])
+	var nitro := Catalog.NITRO_SECONDS[garage_index]
+	var specs := "%s  ·  %d km/h" % [Catalog.CLASSES[garage_index], Catalog.SPEED_KMH[garage_index]]
+	if nitro > 0:
+		specs += "  ·  R Nitro %ds" % int(nitro)
+	_label(stack, specs, 18, MUTED)
 	var active := int(profile.data.selected) == garage_index
 	var owned: bool = profile.data.unlocked[garage_index]
-	var price: int = SaveManager.PRICES[garage_index]
+	var price: int = Catalog.PRICES[garage_index]
 	if active:
-		_label(stack, "Selected for your next run", 20, MUTED)
+		_label(stack, "Free starter car  ·  Selected" if price == 0 else "Selected for your next run", 20, MUTED)
 	elif owned:
 		_button(stack, "Select vehicle", _select_car, true)
 	else:
@@ -568,11 +646,15 @@ func _garage_preview(stack: VBoxContainer) -> void:
 	sun.rotation_degrees = Vector3(-43, -36, 0)
 	world.add_child(sun)
 	var camera := Camera3D.new()
-	camera.position = Vector3(4, 2.5, 4.3)
+	camera.position = Vector3(4.6, 2.45, -5.5)
 	camera.fov = 36.0
 	world.add_child(camera)
 	camera.look_at(Vector3(0, 0.72, 0))
-	VehicleVisual.create(world, 0, PAINT[garage_index], garage_index)
+	VehicleVisual.box(world, Vector3(5.8, 0.16, 5.8), Vector3.DOWN * 0.10, Color("#172531"))
+	var model := VehicleVisual.create_player(world, garage_index)
+	if DisplayServer.get_name() != "headless":
+		var spin := frame.create_tween().set_loops()
+		spin.tween_property(model, "rotation:y", TAU, 16.0).from(0.0)
 
 
 func _preview_car(index: int) -> void:
@@ -582,7 +664,7 @@ func _preview_car(index: int) -> void:
 
 func _select_car() -> void:
 	if not profile.data.unlocked[garage_index]:
-		var price: int = SaveManager.PRICES[garage_index]
+		var price: int = Catalog.PRICES[garage_index]
 		if int(profile.data.balance) < price:
 			return
 		profile.data.balance = int(profile.data.balance) - price
@@ -648,6 +730,7 @@ func _close_settings() -> void:
 func _new_screen(next: State) -> void:
 	state = next
 	hud_values.clear()
+	_nitro_label = null
 	if is_instance_valid(screen):
 		screen.hide()
 		screen.queue_free()
@@ -655,6 +738,9 @@ func _new_screen(next: State) -> void:
 	screen.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay.add_child(screen)
 	screen.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_skip_button = null
+	if next in [State.CITY, State.SPACE]:
+		_add_skip_button()
 
 
 func _shade(centered: bool) -> void:

@@ -4,12 +4,14 @@ const Shapes = preload("res://scripts/vehicle_visual.gd")
 const Globe = preload("res://scripts/vesper_globe.gdshader")
 const PAD_Y := 0.82
 const PAD_RADIUS := 8.0
+const PAD_BEVEL := 0.58
 const AQUA := Color("#75e5e2")
 const AMBER := Color("#ffba72")
 const STEEL := Color("#465665")
 
 var cruise := Node3D.new()
 var surface := Node3D.new()
+var medical_building := Node3D.new()
 var ship := Node3D.new()
 var flame: MeshInstance3D
 var shadow: MeshInstance3D
@@ -19,6 +21,7 @@ var _markers: Array[MeshInstance3D] = []
 func _ready() -> void:
 	add_child(cruise)
 	add_child(surface)
+	surface.add_child(medical_building)
 	add_child(ship)
 	var light := DirectionalLight3D.new()
 	add_child(light)
@@ -112,7 +115,7 @@ func _build_base() -> void:
 	var terrain_mesh := MeshInstance3D.new()
 	terrain_mesh.mesh = terrain.commit()
 	surface.add_child(terrain_mesh)
-	_cylinder(surface, PAD_RADIUS, PAD_RADIUS + 0.58, PAD_Y, Vector3.UP * PAD_Y * 0.5, Color("#29384b"))
+	_cylinder(surface, PAD_RADIUS, PAD_RADIUS + PAD_BEVEL, PAD_Y, Vector3.UP * PAD_Y * 0.5, Color("#29384b"))
 	for angle in 24:
 		var a := angle * TAU / 24.0
 		var rim := Vector3(cos(a), 0, sin(a))
@@ -124,13 +127,14 @@ func _build_base() -> void:
 		Shapes.box(surface, Vector3(0.28, 0.021, 5.0), Vector3(offset, PAD_Y + 0.018, 0), Color("#e8ceab"))
 	Shapes.box(surface, Vector3(5.45, 0.021, 0.30), Vector3(0, PAD_Y + 0.018, 0), Color("#e8ceab"))
 	for x in [-30.0, 28.0]:
-		Shapes.box(surface, Vector3(18, 5.7, 13), Vector3(x, 2.4, -29), STEEL)
-		Shapes.box(surface, Vector3(18.4, 0.43, 13.4), Vector3(x, 5.38, -29), Color("#a78376"))
+		var building := medical_building if x > 0 else surface
+		Shapes.box(building, Vector3(18, 5.7, 13), Vector3(x, 2.4, -29), STEEL)
+		Shapes.box(building, Vector3(18.4, 0.43, 13.4), Vector3(x, 5.38, -29), Color("#a78376"))
 		for win in range(-2, 3):
-			Shapes.box(surface, Vector3(2.1, 1.03, 0.075), Vector3(x + win * 2.65, 3.55, -22.46), AQUA).material_override = _glow(AQUA.darkened(0.23))
-		var deck := Shapes.box(surface, Vector3(14, 0.3, 7.5), Vector3(x, 3.4, -45), Color("#274559"))
+			Shapes.box(building, Vector3(2.1, 1.03, 0.075), Vector3(x + win * 2.65, 3.55, -22.46), AQUA).material_override = _glow(AQUA.darkened(0.23))
+		var deck := Shapes.box(building, Vector3(14, 0.3, 7.5), Vector3(x, 3.4, -45), Color("#274559"))
 		deck.rotation.x = -0.32
-		Shapes.box(surface, Vector3(0.62, 4.9, 0.62), Vector3(x, 1.9, -45), STEEL)
+		Shapes.box(building, Vector3(0.62, 4.9, 0.62), Vector3(x, 1.9, -45), STEEL)
 	Shapes.box(surface, Vector3(0.47, 15.0, 0.47), Vector3(-26, 7.0, -17), STEEL)
 	Shapes.box(surface, Vector3(3.2, 0.28, 0.30), Vector3(-26, 13.7, -17), AMBER).material_override = _glow(AMBER)
 	shadow = _cylinder(surface, 2.1, 2.1, 0.009, Vector3(0, 0.025, 0), Color("#252d3a"))

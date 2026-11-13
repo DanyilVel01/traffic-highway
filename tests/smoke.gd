@@ -428,12 +428,19 @@ func _check_city_story(app: Node) -> void:
 	_check(story.cinematic and is_equal_approx(story.remaining, freeze), "the highway chase animation freezes the countdown")
 	await _wait_city_cinematic(story)
 	await _frames(3)
-	_check(city.traffic._police.size() == 5, "five physical police cruisers deploy on the highway")
-	player.position = Vector3(1850, 0.02, -2.6)
-	for index in 6:
-		city.npcs._update_patrols(3.0)
-	_check(city.npcs._patrols.size() >= 15 and city.npcs._patrols.size() <= 19,
-		"the final pursuit obeys the reduced reinforcement limit")
+	_check(city.npcs._patrols.is_empty(), "the pursuit does not spawn officers beside the moving player")
+	var responding_cruiser: Node3D
+	for unit in city.traffic._police:
+		if unit.driver and unit.position.distance_to(player.position) < 350.0:
+			responding_cruiser = unit
+			break
+	_check(is_instance_valid(responding_cruiser), "the escape dispatches a physical police cruiser")
+	if is_instance_valid(responding_cruiser):
+		var before := responding_cruiser.position
+		await _frames(24)
+		_check(responding_cruiser.position.distance_to(before) > 1.0,
+			"the cruiser drives through the world while pursuing the player")
+		_check(city.npcs._patrols.is_empty(), "police remain in their cars during the pursuit")
 
 	app._start_city()
 	city = app._city
@@ -543,7 +550,48 @@ func _check_space_flight(app: Node) -> void:
 	_check(flight.phase == flight.Phase.TOUCHDOWN and flight.hud._speaker == 3,
 		"a centered gentle landing plays the crew's animated touchdown conversation")
 	await _frames(1210)
-	_check(app.state == app.State.SPACE_COMPLETE, "the mission completes after the twenty-second landing dialogue")
+	_check(flight.phase == flight.Phase.EPILOGUE and app.state == app.State.SPACE,
+		"landing opens the playable first-person cabin")
+	if flight.phase != flight.Phase.EPILOGUE:
+		return
+	var epilogue = flight.epilogue
+	epilogue._walker = epilogue.HATCH
+	var interact := _key(KEY_E)
+	epilogue._unhandled_input(interact)
+	_check(epilogue._beat == -1, "the hatch stays closed until everyone has sealed their suit")
+	epilogue._walker = epilogue.RACK
+	epilogue._unhandled_input(interact)
+	await _frames(180)
+	_check(epilogue._suited and epilogue._gear.all(func(gear: Node3D) -> bool: return gear.visible),
+		"Erik and the crew equip their suits")
+	epilogue._walker = epilogue.HATCH
+	epilogue._unhandled_input(interact)
+	_check(epilogue._beat == 0 and epilogue.can_skip(), "the hatch starts the skippable ending")
+	for beat in epilogue.DURATIONS.size():
+		if beat == 1:
+			epilogue._render_beat(1.0)
+			_check(epilogue._helmets[1].visible and epilogue._actors[0].position.distance_to(epilogue._actors[1].position) > 10.0,
+				"the princess falls behind the crew before the visor breaks")
+		elif beat == 2:
+			epilogue.skip()
+			_check(epilogue._choice_pending() and not epilogue.can_skip(), "the rescue choice pauses the cinematic and cannot be skipped")
+			epilogue._choose_rescue(epilogue.RescueChoice.SACRIFICE)
+			epilogue._render_beat(0.68)
+			_check(not epilogue._helmets[1].visible and epilogue._gear[0].get_parent() == epilogue._actors[0],
+				"Erik reaches the princess before transferring his suit")
+			epilogue._render_beat(0.95)
+			_check(epilogue._gear[0].get_parent() == epilogue._actors[1], "Erik gives his suit to the princess")
+		elif beat == 8:
+			epilogue._render_beat(0.06)
+			_check(epilogue._credits.visible and epilogue._space_objects[0].visible,
+				"credits begin over the Vesper reveal")
+			epilogue._render_beat(0.25)
+			_check(not epilogue._space_objects[0].visible and epilogue._space_objects[1].visible,
+				"Saturn follows Vesper in a separate shot")
+		else:
+			epilogue._render_beat(0.95)
+		epilogue.skip()
+	_check(app.state == app.State.SPACE_COMPLETE, "the mission completes after the credits")
 
 
 func _wait_city_cinematic(story: Node) -> void:

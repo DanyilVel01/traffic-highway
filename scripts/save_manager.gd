@@ -1,9 +1,8 @@
 extends Node
 
 const SAVE_PATH: String = "user://save.json"
-const PRICES: Array[int] = [0, 30, 75]
-const CAR_NAMES: Array[String] = ["AQUA SPRINT", "SUNSET GT", "VIOLET SPORT"]
-var data: Dictionary = {"best_score": 0, "best_distance": 0, "balance": 0, "selected": 0, "unlocked": [true, false, false], "master": 0.8, "music": 0.7, "effects": 0.8, "shadows": true}
+const Catalog = preload("res://scripts/garage_catalog.gd")
+var data: Dictionary = {"best_score": 0, "best_distance": 0, "balance": 0, "selected": 0, "unlocked": [true, false, false, false], "master": 0.8, "music": 0.7, "effects": 0.8, "shadows": true}
 
 func load_data() -> void:
 	if not FileAccess.file_exists(SAVE_PATH):
@@ -23,10 +22,11 @@ func load_data() -> void:
 	if parsed.get("shadows") is bool:
 		data.shadows = parsed.shadows
 	var unlocked: Variant = parsed.get("unlocked")
-	if unlocked is Array and unlocked.size() == 3:
-		data.unlocked = [true, unlocked[1] == true, unlocked[2] == true]
+	if unlocked is Array:
+		for index in range(1, mini(unlocked.size(), Catalog.NAMES.size())):
+			data.unlocked[index] = unlocked[index] is bool and unlocked[index]
 	var selected: Variant = parsed.get("selected")
-	if (selected is int or selected is float) and int(selected) >= 0 and int(selected) < 3 and data.unlocked[int(selected)]:
+	if (selected is int or selected is float) and int(selected) >= 0 and int(selected) < Catalog.NAMES.size() and data.unlocked[int(selected)]:
 		data.selected = int(selected)
 
 func save_data() -> void:

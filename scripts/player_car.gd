@@ -1,10 +1,13 @@
 extends Area3D
 
 const VehicleVisual = preload("res://scripts/vehicle_visual.gd")
+const Catalog = preload("res://scripts/garage_catalog.gd")
 const WIDTH: float = 1.65
 const LENGTH: float = 3.3
 const MIN_DRIFT_SPEED: float = 50.0 / 3.6
 
+var model_index := 0
+var _nitro_glow: Node3D
 var lane: int = 1
 var visual: Node3D
 var paint: Color
@@ -23,8 +26,11 @@ func build(car_index: int) -> void:
 	hitbox.shape = shape
 	hitbox.position.y = 0.8
 	add_child(hitbox)
-	paint = VehicleVisual.PLAYER_PAINTS[car_index]
-	visual = VehicleVisual.create(self, 0, paint, car_index)
+	model_index = car_index
+	paint = Catalog.PAINTS[car_index]
+	visual = VehicleVisual.create_player(self, car_index)
+	if Catalog.NITRO_SECONDS[car_index] > 0:
+		_nitro_glow = VehicleVisual.create_nitro(visual, car_index)
 	wheels = VehicleVisual.find_wheels(visual)
 	_build_tire_smoke()
 
@@ -66,6 +72,11 @@ func advance(delta: float, travel: float, lane_width: float, lane_speed: float, 
 	for wheel in wheels:
 		wheel.rotate_x(travel / 0.36)
 	set_drift_smoke(drifting)
+
+
+func set_nitro(active: bool) -> void:
+	if is_instance_valid(_nitro_glow):
+		_nitro_glow.visible = active
 
 
 func set_drift_smoke(active: bool) -> void:

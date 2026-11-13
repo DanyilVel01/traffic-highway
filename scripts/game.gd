@@ -1,5 +1,6 @@
 extends Node3D
 
+const Catalog = preload("res://scripts/garage_catalog.gd")
 const VehicleVisual = preload("res://scripts/vehicle_visual.gd")
 const RoadGenerator = preload("res://scripts/road_generator.gd")
 const TrafficSpawner = preload("res://scripts/traffic_spawner.gd")
@@ -13,8 +14,6 @@ const SkyRescue = preload("res://scripts/sky_rescue.gd")
 const TRAFFIC_PAINTS: Array[Color] = [Color("#e76e57"), Color("#e6d4a2"), Color("#668abb"), Color("#abbd9a")]
 const INSECT_SHELLS: Array[Color] = [Color("#f48842"), Color("#d98ae4"), Color("#89ce60")]
 const START_SPEED: float = 18.0
-const TOP_SPEED: float = 250.0 / 3.6
-const ACCELERATION: float = 12.0
 const BRAKE_DECELERATION: float = 24.0
 const HANDBRAKE_DECELERATION: float = 5.0
 const LAUNCH_SPEED: float = 150.0 / 3.6
@@ -50,7 +49,10 @@ var playing: bool = false:
 		playing = value
 		if not value and is_instance_valid(_player):
 			_player.set_drift_smoke(false)
+			_player.set_nitro(false)
 var speed: float = START_SPEED
+var nitro_left := 0.0
+var nitro_cooldown := 0.0
 var progress := ScoreManager.new()
 var _spawner := TrafficSpawner.new()
 var _rng := RandomNumberGenerator.new()
@@ -170,6 +172,8 @@ func resume_run() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if playing and not _is_launching():
 		_player.handle_input(event)
+		if event.is_action_pressed(&"nitro") and not event.is_echo():
+			_activate_nitro()
 
 
 func _physics_process(delta: float) -> void:
@@ -239,12 +243,36 @@ func _is_launching() -> bool:
 
 
 func _update_speed(delta: float, handbrake: bool) -> void:
-	var rate := ACCELERATION * Input.get_action_strength(&"accelerate")
+	var boosting := nitro_left > 0.0
+	if boosting:
+		nitro_left = maxf(nitro_left - delta, 0.0)
+		if nitro_left == 0.0:
+			nitro_cooldown = Catalog.NITRO_RECHARGE
+	else:
+		nitro_cooldown = maxf(nitro_cooldown - delta, 0.0)
+	_player.set_nitro(boosting)
+	var rate := Catalog.ACCELERATION[_player.model_index] * Input.get_action_strength(&"accelerate")
+	var limit := Catalog.SPEED_KMH[_player.model_index] / 3.6
+	if boosting:
+		rate += 17.0
+		limit += Catalog.NITRO_BONUS_KMH / 3.6
 	if Input.is_action_pressed(&"brake"):
 		rate = -BRAKE_DECELERATION
 	if handbrake:
 		rate -= HANDBRAKE_DECELERATION
-	speed = clampf(speed + rate * delta, 0.0, TOP_SPEED)
+	if speed > limit and not boosting and rate >= 0.0:
+		speed = move_toward(speed, limit, 12.0 * delta)
+	else:
+		speed = clampf(speed + rate * delta, 0.0, maxf(speed, limit))
+
+
+func _activate_nitro() -> void:
+	if nitro_left <= 0.0 and nitro_cooldown <= 0.0:
+		nitro_left = Catalog.NITRO_SECONDS[_player.model_index]
+
+
+func nitro_duration() -> float:
+	return Catalog.NITRO_SECONDS[_player.model_index] if is_instance_valid(_player) else 0.0
 
 
 func _emit_stats() -> void:
@@ -252,6 +280,8 @@ func _emit_stats() -> void:
 
 
 func _reset_world(car_index: int) -> void:
+	nitro_left = 0.0
+	nitro_cooldown = 0.0
 	_world.show()
 	_world.process_mode = Node.PROCESS_MODE_INHERIT
 	_sky_route = false
@@ -303,6 +333,8 @@ func _position_finale() -> void:
 
 
 func _begin_finale() -> void:
+	nitro_left = 0.0
+	nitro_cooldown = 0.0
 	playing = false
 	speed = 0.0
 	_clear_obstacles()
@@ -311,6 +343,16 @@ func _begin_finale() -> void:
 	_finale.cue.connect(_on_finale_cue)
 	_finale.finished.connect(_start_pursuit, CONNECT_ONE_SHOT)
 	_finale.play(_player)
+
+
+func skip_cutscene() -> void:
+	if is_instance_valid(_rescue):
+		_world.remove_child(_rescue)
+		_rescue.queue_free()
+		_rescue = null
+		_finish_rescue()
+	elif is_instance_valid(_finale) and not _pursuing:
+		_finale.skip()
 
 
 func _on_finale_cue(cue: String) -> void:
